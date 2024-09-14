@@ -915,6 +915,14 @@ function Decompile(f: (...any) -> (...any), params)
 		Output = Output:gsub(`{var}%.`, getvalue(var) .. '.')
 	end
 
+    print(usage)
+
+    Output = Output:gsub("v(%d+)%((.*)%)", function(Index, Args)
+     if usage[Index] == 1 then
+      return ("%s(%s)"):format(values[Index], Args)
+     end
+    end)
+
 	Output = Output:gsub("\n%s*\n", "\n")
 
 
