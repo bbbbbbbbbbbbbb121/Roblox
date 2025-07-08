@@ -1,0 +1,1033 @@
+--[[
+TODO:
+^ 4/7/2025
+! Add a feature where if somebody tries to shoot you (Bullet created which is close to you and was NOT shot by you), the script fires back. | NOT YET (PROBABLY HARDEST FEATURE)
+! Make shooting also shoot cars | TODO (I THINK DONE?)
+! Add anti jump cooldown
+! Work on silent aim, its really weird when you're looking at somebody and aiming at them, shoot and then your shoot goes to someone behind you | DONE!! (make it shoot cars too | DONE)
+! Add auto buy armor + weapons | ...
+! Anxious Mode - If somebody equips a gun auto shoot them
+! Add auto reload
+! Maybe add a claw machine script idk | OPTIONAL
+]]
+
+--> Libraries & Services
+
+local Discord = "discord.gg/aqfudJEEeE"
+local Library = loadstring(game:HttpGet('https://raw.githubusercontent.com/bbbbbbbbbbbbbb121/LinoriaLib/refs/heads/main/Library.lua'))()
+
+local MarketplaceService = game:GetService("MarketplaceService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+if setclipboard then setclipboard(Discord) end
+
+local Script = 'Sylex | ' .. Discord
+
+--> Settings
+local Settings = {
+    HitPart = "Head",
+    SilentAim = true,
+    AutoShoot = false,
+    MaxDistance = 200,
+    LookAt = false,
+    CameraView = false,
+    SpeedBoost = 0,
+    AllowKnocked = false,
+    AntiStomp = true,
+    ShopBulk = 1,
+    Defend = false,
+    ESP = {
+        Color = Color3.new(1, 1, 1),
+        TextColor = Color3.new(1, 0, 0),
+        DisplayNames = true,
+        DisplayDistance = false,
+        DisplayGuns = false,
+        Enabled = false
+    }
+}
+
+--[[
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local BulletsFolder = workspace:WaitForChild("Bullets")
+local DangerDistanceThreshold = 5 --> studs, tweak based on accuracy desired
+
+local function IsBulletHeadingTowardPlayer(Bullet)
+	local Character = LocalPlayer.Character
+	if not Character or not Character:FindFirstChild("HumanoidRootPart") then return false end
+
+	local Root = Character.HumanoidRootPart
+	local BulletPos = Bullet.Position
+	local BulletDir = Bullet.CFrame.LookVector
+
+	local ToPlayer = (Root.Position - BulletPos).Unit
+	local Dot = ToPlayer:Dot(BulletDir)
+
+	return Dot > 0.98 -- cosine of small angle (~11.5 degrees), tweak for strictness
+end
+
+BulletsFolder.ChildAdded:Connect(function(Bullet)
+	if not Bullet:IsA("BasePart") then return end
+	if Bullet:GetAttribute("Shooter") == LocalPlayer.Name then return end
+
+	RunService.Heartbeat:Wait() -- wait one frame so Position & CFrame are valid
+
+	if IsBulletHeadingTowardPlayer(Bullet) then
+		print("DANGER!")
+	end
+end)
+]]
+
+--> UI Setup
+local Window = Library:CreateWindow({
+    Title = Script,
+    Center = true,
+    AutoShow = true,
+    TabPadding = 8,
+    MenuFadeTime = 0.2
+})
+
+local Tabs = {
+    Main = Window:AddTab('Main'),
+    Skins = Window:AddTab("Skins")
+}
+
+local AimGroup = Tabs.Main:AddLeftGroupbox('Aiming')
+local PlayerGroup = Tabs.Main:AddRightGroupbox('Player')
+local LethalGroup = Tabs.Main:AddLeftGroupbox('Lethal')
+local ESPGroup = Tabs.Main:AddRightGroupbox('ESP')
+
+local SkinsGroup = Tabs.Skins:AddLeftGroupbox('Skins')
+SkinsGroup:AddDivider()
+
+local function CreateToggle(Group, SettingName, Tooltip, SettingKey)
+    Group:AddToggle(SettingName .. (SettingKey or ""), {
+        Text = SettingKey or SettingName,
+        Tooltip = Tooltip,
+        Default = if not SettingKey then Settings[SettingName] else Settings[SettingName][SettingKey],
+        Callback = function(Value)
+            if not SettingKey then Settings[SettingName] = Value else Settings[SettingName][SettingKey] = Value end
+        end
+    })
+end
+
+CreateToggle(AimGroup, "SilentAim", 'Redirects your shots to the nearest player to your mouse')
+CreateToggle(AimGroup, "AutoShoot", 'Automatically shoots the nearest player to your mouse')
+CreateToggle(AimGroup, "LookAt", 'Looks at players before shooting')
+CreateToggle(AimGroup, "AllowKnocked", 'Silent aim also shoots knocked people')
+CreateToggle(AimGroup, "AllowCashRegisters", "Enables / Disables aiming at cash registers")
+
+AimGroup:AddDropdown('HitPart', {
+    Values = {"Head", "HumanoidRootPart"},
+    Default = 1,
+    Multi = false,
+    Text = 'Hit Part',
+    Tooltip = 'Target body part to shoot',
+    Callback = function(Value) Settings.HitPart = Value end
+})
+
+CreateToggle(AimGroup, "CameraView", 'If on, Silent aim will only look for players that are visible on your camera')
+AimGroup:AddSlider('MySlider', {
+    Text = 'Max Shoot Distance',
+    Default = Settings.MaxDistance,
+    Min = 50,
+    Max = 1000,
+    Rounding = 10,
+    Compact = false,
+    Callback = function(Value) Settings.MaxDistance = Value end
+})
+
+--> Internal Setup
+
+local MainEvent = ReplicatedStorage:FindFirstChild("MainEvent")
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+local Camera = workspace.CurrentCamera
+
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local Root = Character:WaitForChild("HumanoidRootPart")
+local Humanoid = Character:WaitForChild("Humanoid")
+local ToolEquipped, IsGun
+
+Library:SetWatermarkVisibility(true)
+
+do --> FPS & Ping counter (looks cool)
+    local FrameTimer, FrameCounter, FPS = tick(), 0, 0
+    local Ping = game:GetService('Stats').Network.ServerStatsItem['Data Ping']
+
+    local WatermarkConnection = game:GetService('RunService').RenderStepped:Connect(function()
+        FrameCounter += 1;
+
+        if (tick() - FrameTimer) >= 1 then
+            FPS = FrameCounter;
+            FrameTimer = tick();
+            FrameCounter = 0;
+        end;
+
+        Library:SetWatermark(('%s > %s fps > %s ms'):format( Script, FPS // 1, Ping:GetValue() // 1 ));
+    end);
+
+    Library:OnUnload(function() WatermarkConnection:Disconnect() end)
+end
+
+PlayerGroup:AddSlider('MySlider2', {
+    Text = 'Speed Boost',
+    Default = Settings.SpeedBoost,
+    Min = 0,
+    Max = 3,
+    Rounding = 1,
+    Compact = false,
+    Callback = function(v) Settings.SpeedBoost = v end
+})
+
+PlayerGroup:AddButton({
+    Text = "Force Reset",
+    Tooltip = "Force reset, for when you're knocked or stuck",
+    Callback = function() Humanoid.Health = 0 end
+})
+
+--> Lists
+
+local BlockedArgs = {
+    "teleportdetect", "checker_1", "checker", "gui_check",
+    "onemoretime", "checkingspeed", "banremote",
+    "permaidban", "kickremote", "br_kickpc", "br_kickmobile"
+}
+
+local Blocked_Methods = {
+    "httpgetasync", "httppostasync", "openscreenshotsfolder", "loadlocalasset",
+    "requestinternal", "performpurchase", "performpurchasev2", "performsubscriptionpurchase",
+    "performsubscriptionpurchasev2", "executejavascript", "openbrowserwindow", "closebrowserwindow",
+    "opennativeoverlay", "copyauthcookiefrombrowsertoengine", "getrobuxbalance"
+}
+
+local GunList = {
+	"[Shotgun]",
+	"[Drum-Shotgun]",
+	"[Rifle]",
+	"[TacticalShotgun]",
+	"[AR]",
+	"[AUG]",
+	"[AK47]",
+	"[LMG]",
+    "[Double-Barrel SG]",
+	"[SilencerAR]",
+    "[Revolver]",
+    "[Flintlock]"
+}
+
+local Ignored = ReplicatedStorage:FindFirstChild("MainModule") and require(ReplicatedStorage.MainModule).Ignored or {}
+
+local Skins = require(game:GetService("ReplicatedStorage").SkinModules)
+
+local function CreateMesh(Tool: Tool, Original: Instance | string) --> Skin Changer
+    if not Original then
+        return Library:Notify("Unable to create skin; Parameter #1 missing.", 5)
+    end
+
+    if not Tool then return end
+
+    local Default = Tool.Default
+    local SkinHolder = Default:FindFirstChild("Skin_Holder")
+
+    print("Skin?",SkinHolder)
+    print("Original",Original)
+
+    if SkinHolder then SkinHolder:Destroy() end
+
+    if typeof(Original) ~= "Instance" then
+        Default.TextureID = Original
+    else
+        if Original.ClassName ~= "MeshPart" then
+            --> its a part, overlay it? (probably replace handle)
+            --> work on this, an example is aqua.db which is a part, but i dont really know how to display it, maybe figure out a way later
+            return Library:Notify("Hey, You've selected a skin that the script currently does NOT support.", 5)
+        else
+            Default.TextureID = Original.TextureID
+
+            local Clone = Original:Clone()
+            Clone.Name = "Skin_Holder"
+            Clone.Parent = Default
+        end
+    end
+
+    return true
+end
+
+--> Constants
+
+local Offset = CFrame.new(2, 0.35, 0)
+
+local Zero = Vector2.zero
+local CFnew = CFrame.new
+
+local Params = RaycastParams.new()
+Params.FilterDescendantsInstances = {Character, workspace:FindFirstChild("Vehicles"), unpack(Ignored)}
+Params.FilterType = Enum.RaycastFilterType.Blacklist
+
+--> Localization
+
+local Lower, Sub, SFind, Byte, Gsub = string.lower, string.sub, string.find, string.byte, string.gsub
+local Find, Insert, Remove = table.find, table.insert, table.remove
+local Wait, Spawn = task.wait, task.spawn
+local Min, Max, Clamp, Rad, Cos, Sin, Random, Acos = math.min, math.max, math.clamp, math.rad, math.cos, math.sin, math.random, math.acos
+
+local SkinList = {}
+
+local function UseSkin(Tool, SkinName)
+    Tool = Tool or ToolEquipped
+
+    if not Tool then return end
+
+    local Skin = (Skins[Tool.Name] or {})[SkinName] or SkinList[Tool.Name];
+    
+    if not Skin then return end
+
+    if SkinName then Skin.Name = SkinName else SkinName = Skin.Name end
+
+    local ShootSounds = ReplicatedStorage.SkinAssets.GunShootSounds
+    local GunSounds = ShootSounds:FindFirstChild(Tool.Name)
+
+    local Sound = GunSounds and GunSounds:FindFirstChild(SkinName)
+    local Handle = Tool.Handle
+
+    local Shoot = Handle:FindFirstChild("ShootSound")
+
+    Tool.Handle:SetAttribute("SkinName", SkinName) --> will this work? 😳 update: IT WORKED (spoofs gun beams)
+
+    if Shoot then
+        if Sound then
+            Shoot:SetAttribute("Old", Shoot:GetAttribute("Old") or Shoot.SoundId)
+            Shoot.SoundId = Sound.Value
+        else
+            Shoot.SoundId = Shoot:GetAttribute("Old") or Shoot.SoundId
+        end
+    end
+
+    if CreateMesh(Tool, Skin.TextureID) then SkinList[Tool.Name] = Skin end
+end
+
+local HasSkins = table.clone(GunList)
+Insert(HasSkins, "[Wallet]")
+
+table.sort(HasSkins, function(a, b) return Byte(Sub(a, 2, 2)) < Byte(Sub(b, 2, 2)) end)
+
+for _, v in next, HasSkins do
+    local SkinsDropdown = SkinsGroup:AddDropdown('Skins', {
+        Values = {},
+        Default = 1,
+        Multi = false,
+        Text = Gsub(v, "[%[%]]", "") .. " Skins",
+        Tooltip = "Select a skin to change to"
+    })
+
+    local List = {};
+
+    for n in next, Skins[v] or {"No Skins Available"} do Insert(List, n) end
+    table.sort(List, function(a, b) return Byte(a) < Byte(b) end) --> Sort alphabetically
+
+    SkinsDropdown:SetValues(List)
+
+    Spawn(function()
+        SkinsDropdown:OnChanged(function()
+            local Tool = Character:FindFirstChild(v) or LocalPlayer.Backpack:FindFirstChild(v)
+            UseSkin(Tool, SkinsDropdown.Value)
+        end)
+    end)
+end
+
+local function CharacterChildAdded(child)
+    if child:IsA("Tool") then
+        ToolEquipped, IsGun = child, Find(GunList, child.Name)
+        UseSkin(ToolEquipped)
+    end
+end
+
+local function CharacterChildRemoved(child)
+    if child:IsA("Tool") then ToolEquipped, IsGun = nil, false end
+end
+
+local LastHealthLost = 0;
+
+local function AntiStomp()
+    local LastHealth = Humanoid.Health;
+    Humanoid.HealthChanged:Connect(function(health)
+        print("Health changed",health)
+        if LastHealth > health then LastHealthLost = tick() end
+        if health <= 10 and health ~= 0 then --> Probably got knocked
+            Humanoid.Health = 0
+        end
+    end)
+end
+
+--> Character Respawn Handling
+LocalPlayer.CharacterAdded:Connect(function(NewChar)
+    Character = NewChar
+    Root = Character:WaitForChild("HumanoidRootPart")
+    Humanoid = Character:WaitForChild("Humanoid")
+    Params.FilterDescendantsInstances = {Character}
+
+    Character.ChildAdded:Connect(CharacterChildAdded)
+    Character.ChildRemoved:Connect(CharacterChildRemoved)
+
+    AntiStomp()
+end)
+
+Character.ChildAdded:Connect(CharacterChildAdded)
+Character.ChildRemoved:Connect(CharacterChildRemoved)
+
+AntiStomp()
+
+local function Stomp() MainEvent:FireServer("Stomp") end
+
+local function IsKOED(Char)
+    local Effects = Char and Char:FindFirstChild("BodyEffects")
+    if not Effects then return true end
+    local KO, Dead = Effects:FindFirstChild("K.O"), Effects:FindFirstChild("Dead")
+    return KO and KO.Value or Dead and Dead.Value
+end
+
+local function GetClosestPlayer(Position: Vector3, MaxDistance: number?) : (BasePart, Player, RaycastResult)
+    local ClosestPart, ClosestPlayer, FinalRay;
+    local ClosestDistance = MaxDistance or Settings.MaxDistance;
+
+    local PlayersList = game:GetService("Players"):GetPlayers()
+
+    Remove(PlayersList, 1) -- remove localplayer
+
+    for _, Player in next, PlayersList do
+        local Char = Player.Character
+        local Part = Char and Char:FindFirstChild(Settings.HitPart)
+
+        if not Part or (not Settings.AllowKnocked and IsKOED(Char)) then continue end
+
+        local function IsVisible(part)
+            if Settings.CameraView then
+                local _, OnScreen = Camera:WorldToViewportPoint(part.Position)
+                return OnScreen
+            end
+
+            local Direction = (part.Position - Position)
+
+            local ray = workspace:Raycast(Position, Direction.Unit * Direction.Magnitude, Params)
+            return ray and ray.Instance:IsDescendantOf(Char), ray
+        end
+        
+        local Direction = (Part.Position - Position)
+        local Distance = Direction.magnitude
+
+        --> Tools and everything inside the player's character are ignored since Ray.Instance:IsDescendantOf is used
+
+        if ( ClosestDistance > Distance ) then
+            local IsVis, Ray = IsVisible(Part)
+
+            if IsVis and Ray then
+                ClosestPart, ClosestPlayer, ClosestDistance, FinalRay = Part, Player, Distance, Ray
+            end
+        end
+    end
+
+    return ClosestPart, ClosestPlayer, FinalRay
+end
+
+local function Reload()
+    if IsGun and ToolEquipped.Ammo.Value == 0 then -- Gun equipped, Tool's ammo is 0
+        MainEvent:FireServer("Reload", ToolEquipped)
+    end
+end
+
+local function Shoot(Position: Vector3 | Instance | nil) --> had to read & modify decompiled code for ts.. (most of this code is ripped from what i decompiled, but i had to add some things 😎)
+	if IsKOED(Character) then return end
+
+    if not ToolEquipped or not IsGun then
+        for _, v in next, LocalPlayer.Backpack:GetChildren() do
+            if Find(GunList, v.Name) then
+                if ToolEquipped then
+                    ToolEquipped.Parent = LocalPlayer.Backpack
+                end
+
+                ToolEquipped = v
+                IsGun = true
+                v.Parent = Character
+                break
+            end
+        end
+    end
+
+    Reload()
+
+    if not IsGun then print("No gun equipped") return end
+
+	local Remote = ToolEquipped:FindFirstChild("RemoteEvent")
+	local Handle = ToolEquipped:FindFirstChild("Handle")
+	if not Remote or not Handle then return end
+
+	if not Find(Params.FilterDescendantsInstances, ToolEquipped) then
+		Insert(Params.FilterDescendantsInstances, ToolEquipped)
+	end
+
+    local Origin = (Handle.CFrame * Offset).Position --> origin = forcedorigin btw
+
+    --[[local Origin = (Handle.CFrame * Offset).Position --> origin = forcedorigin btw
+    local AimPosition = Origin + (Mouse.Hit.Position - Origin) * 200
+	local Direction = (AimPosition - Origin).Unit
+
+    local result = workspace:Raycast(Origin, Direction * 200, Params) -- yes, we have to raycast just to get Ray.Position stop asking
+    local HitInstance, HitPosition, Normal
+
+	if result then
+		HitInstance, HitPosition, Normal = result.Instance, result.Position, result.Normal
+	else
+		HitPosition = Origin + Direction * 200
+	end]]
+
+    local HitPosition, Normal;
+    local HitInstance, _, HitRay;
+
+    if typeof(Position) == "Instance" then --> part.position - hit
+        local Direction = (Position.Position - Origin)
+
+        local Ray = workspace:Raycast(Origin, Direction.Unit * Direction.Magnitude, Params)
+        if Ray then
+            HitPosition, Normal, HitRay = Ray.Position, Ray.Normal, Ray
+        else
+            Position = Position.Position
+        end
+    else
+        HitInstance, _, HitRay = GetClosestPlayer(Position or Mouse.Hit.Position)
+    end
+
+    if not HitRay and not HitInstance then --> nothing available :(
+        HitPosition, Normal = Position, Vector3.yAxis
+    else
+        HitPosition, Normal = HitRay.Position, HitRay.Normal
+    end
+
+    MainEvent:FireServer("UpdateMousePosI2", HitPosition)
+	Remote:FireServer("Shoot")
+
+	MainEvent:FireServer("ShootGun", Handle, Origin, HitPosition, HitInstance, Normal)
+	Remote:FireServer()
+end
+
+local function DrawESP(plr)
+    if not Settings.ESP.Enabled then return end
+
+	local Box = Drawing.new("Quad")
+	Box.Visible, Box.Color, Box.Thickness = false, Settings.ESP.Color, 1
+	Box.PointA, Box.PointB, Box.PointC, Box.PointD = Zero, Zero, Zero, Zero
+
+	local User = Drawing.new("Text")
+	User.Font, User.Transparency = 0, 1
+
+	local HealthOutline = Drawing.new("Square")
+	HealthOutline.Thickness, HealthOutline.Transparency, HealthOutline.Color = 1, 1, Color3.new(0, 0, 0)
+
+	local HealthFill = Drawing.new("Square")
+	HealthFill.Filled, HealthFill.Transparency = true, 1
+
+    local ArmorOutline = Drawing.new("Square")
+    ArmorOutline.Thickness, ArmorOutline.Transparency, ArmorOutline.Color = 1, 1, Color3.new(0, 0, 0)
+
+    local ArmorFill = Drawing.new("Square")
+    ArmorFill.Filled, ArmorFill.Transparency = true, 1
+
+    local Stuff = {
+        HealthOutline = HealthOutline,
+        HealthFill = HealthFill,
+        ArmorOutline = ArmorOutline,
+        ArmorFill = ArmorFill,
+        User = User,
+        Box = Box,
+    }
+
+	local BarWidth = 5
+
+	local function Hide()
+		for _, v in next, Stuff do v.Visible = false end
+	end
+
+	local function Update()
+		local Connection
+		Connection = game:GetService("RunService").RenderStepped:Connect(function()
+			if not plr or not Settings.ESP.Enabled then
+                for _, v in next, Stuff do v:Destroy() end
+                return Connection:Disconnect()
+            end
+
+			local pCharacter = plr.Character
+			if not pCharacter then return Hide() end
+
+			local PrimaryPart, pHumanoid = pCharacter.PrimaryPart, pCharacter:FindFirstChild("Humanoid")
+			local Health = pHumanoid and pHumanoid.Health or 0
+
+			if not PrimaryPart or Health <= 0 then return Hide() end
+
+			local _, Visible = Camera:WorldToViewportPoint(PrimaryPart.Position)
+			if not Visible then return Hide() end
+
+			local Points = {}
+
+			for _, v in next, pCharacter:GetChildren() do
+				if v:IsA("BasePart") then
+					local p, vis = Camera:WorldToViewportPoint(v.Position)
+					local cframe, size = v.CFrame, v.Size
+
+					if v == PrimaryPart then
+						p, vis = Camera:WorldToViewportPoint((cframe * CFnew(0, 0, -size.Z)).p)
+					elseif v.Name == "Head" then
+						p, vis = Camera:WorldToViewportPoint((cframe * CFnew(0, size.Y / 2, size.Z / 1.25)).p)
+					elseif SFind(v.Name, "Left") then
+						p, vis = Camera:WorldToViewportPoint((cframe * CFnew(-size.X / 2, 0, 0)).p)
+					elseif SFind(v.Name, "Right") then
+						p, vis = Camera:WorldToViewportPoint((cframe * CFnew(size.X / 2, 0, 0)).p)
+					end
+
+					if not vis then return Hide() end
+					Insert(Points, p)
+				end
+			end
+
+			local TopY, DownY = math.huge, -math.huge
+			local LeftX, RightX = TopY, DownY
+
+			for _, p in next, Points do
+				if p.Y < TopY then TopY = p.Y end
+				if p.Y > DownY then DownY = p.Y end
+				if p.X > RightX then RightX = p.X end
+				if p.X < LeftX then LeftX = p.X end
+			end
+
+            local RealHeight = DownY - TopY
+			local RealWidth = RightX - LeftX
+
+			local MinHeight, MaxHeight = 30, 150
+            local MinWidth, MaxWidth = 15, 75
+
+            if RealHeight < MinHeight then
+                local Expand = (MinHeight - RealHeight) / 2
+                TopY, DownY = TopY - Expand, DownY + Expand
+                RealHeight = MinHeight
+            elseif RealHeight > MaxHeight then
+                local Shrink = (RealHeight - MaxHeight) / 2
+                TopY, DownY = TopY + Shrink, DownY - Shrink
+                RealHeight = MaxHeight
+            end
+
+            if RealWidth < MinWidth then
+                local Expand = (MinWidth - RealWidth) / 2
+                LeftX -= Expand
+                RightX += Expand
+                RealWidth = MinWidth
+            elseif RealWidth > MaxWidth then
+                local Shrink = (RealWidth - MaxWidth) / 2
+                LeftX += Shrink
+                RightX -= Shrink
+                RealWidth = MaxWidth
+            end
+
+			local BottomLeft = Vector2.new(LeftX, DownY)
+
+			Box.PointA, Box.PointB, Box.PointC, Box.PointD = Vector2.new(RightX, TopY), Vector2.new(LeftX, TopY), BottomLeft, Vector2.new(RightX, DownY)
+			Box.Visible, Box.Color = true, Settings.ESP.Color
+
+			local UserText = Settings.ESP.DisplayDistance and (Root.Position - PrimaryPart.Position).Magnitude // 1 .. " studs\n" or ""
+            UserText ..= "@" .. plr.DisplayName .. " (" .. plr.Name .. ")"
+
+            local pTool = pCharacter:FindFirstChildOfClass("Tool")
+            if pTool and Find(GunList, pTool.Name) and Settings.ESP.DisplayGuns then
+                UserText ..= `\n{Sub(pTool.Name, 2, -2)} ({pTool.Ammo.Value}/{pTool.MaxAmmo.Value} ammo)`
+            end
+
+            User.Position = BottomLeft
+            User.Text = UserText
+			User.Color = Settings.ESP.TextColor
+			User.Size = Clamp(RealHeight / 6, 15, 30)
+			User.Visible = Settings.ESP.DisplayNames or Settings.ESP.DisplayDistance
+
+			local BarHeight = RealHeight
+
+			HealthOutline.Position = Vector2.new(LeftX - BarWidth - 2, TopY)
+			HealthOutline.Size = Vector2.new(BarWidth, BarHeight)
+			HealthOutline.Visible = true
+
+			local HP = Clamp(Health / pHumanoid.MaxHealth, 0, 1)
+			local Height = BarHeight * HP
+
+			HealthFill.Position = Vector2.new(LeftX - BarWidth - 2, TopY + (BarHeight - Height))
+			HealthFill.Size = Vector2.new(BarWidth, Height)
+			HealthFill.Color = Color3.fromRGB(255 * (1 - HP), 255 * HP, 0)
+			HealthFill.Visible = true
+
+            local Effects = pCharacter:FindFirstChild("BodyEffects")
+            local ArmorValue = Effects and Effects:FindFirstChild("ArmorValue")
+
+            local Armor = ArmorValue and ArmorValue.Value or 0
+            local ArmorMax = 100
+            local AP = Clamp(Armor / ArmorMax, 0, 1)
+            local AHeight = BarHeight / 2 * AP
+
+            local Half = BarHeight / 2
+
+            ArmorOutline.Position = Vector2.new(LeftX - BarWidth * 2 - 4, TopY + Half)
+            ArmorOutline.Size = Vector2.new(BarWidth, BarHeight / 2)
+            ArmorOutline.Visible = true
+
+            ArmorFill.Position = Vector2.new(LeftX - BarWidth * 2 - 4, TopY + (Half + (Half - AHeight)))
+            ArmorFill.Size = Vector2.new(BarWidth, AHeight)
+            ArmorFill.Color = Color3.fromRGB(0, 170, 255)
+            ArmorFill.Visible = true
+		end)
+	end
+
+	Update()
+end
+
+ESPGroup:AddToggle('Esp', {
+    Text = "ESP Enabled",
+    Tooltip = "Enables / Disables ESP to see where players are",
+    Default = Settings.ESP.Enabled,
+    Callback = function(Value)
+        Settings.ESP.Enabled = Value
+
+        if Value then
+            for _, v in next, Players:GetPlayers() do if v ~= LocalPlayer then DrawESP(v) end end
+        end
+    end
+})
+
+CreateToggle(ESPGroup, "ESP", "Enables / Disables displaying player's names in ESPs", "DisplayNames")
+CreateToggle(ESPGroup, "ESP", "Enables / Disables displaying distance in ESPs", "DisplayDistance")
+CreateToggle(ESPGroup, "ESP", "Enables / Disables displaying what guns people are holding in ESPs", "DisplayGuns")
+
+ESPGroup:AddLabel('ESP Color'):AddColorPicker('Color', {
+    Default = Settings.ESP.Color,
+    Title = 'ESP Color',
+    Callback = function(Value) Settings.ESP.Color = Value end
+})
+
+ESPGroup:AddLabel('Text Color'):AddColorPicker('TextColor', {
+    Default = Settings.ESP.TextColor,
+    Title = 'Text Color',
+    Callback = function(Value) Settings.ESP.TextColor = Value end
+})
+
+Players.PlayerAdded:Connect(DrawESP)
+
+local function IdentifyPlayer(Text: string): (Player?, number) --> Get player & name similarity by string
+    if Text == "" then return nil, 0 end
+    
+    local Lowered = Lower(Text)
+    local players = game:GetService("Players"):GetPlayers()
+    
+    --> Maybe entered the full name?
+    for _, player in next, players do
+        local n, d = Lower(player.Name), Lower(player.DisplayName)
+        if n == Lowered or d == Lowered then
+            return player, 100
+        end
+    end
+
+    local function CalculateSimilarity(a: string, b: string): number
+        local lenA, lenB = #a, #b
+        if lenA == 0 or lenB == 0 then return 0 end
+        
+        local matrix = {}
+        for i = 0, lenA do
+            matrix[i] = {[0] = i}
+        end
+        for j = 0, lenB do
+            matrix[0][j] = j
+        end
+
+        for i = 1, lenA do
+            for j = 1, lenB do
+                matrix[i][j] = Min(
+                    matrix[i-1][j] + 1,
+                    matrix[i][j-1] + 1,
+                    matrix[i-1][j-1] + (Sub(a, i, i) == Sub(b, j, j) and 0 or 1)
+                )
+            end
+        end
+        
+        return (1 - matrix[lenA][lenB] / Max(lenA, lenB)) * 100
+    end
+
+    local BestScore, Player = 0;
+
+    for _, player in next, players do
+        local n, d = Lower(player.Name), Lower(player.DisplayName)
+        
+        local Bonus = Sub(n, 1, #Lowered) == Lowered and 50 or Sub(d, 1, #Lowered) == Lowered and 30 or 0
+        
+        local Score = Max(CalculateSimilarity(n, Lowered), CalculateSimilarity(d, Lowered)) + Bonus --> Similarity + bonus
+        
+        Score = Min(Score, 100)
+        
+        if Score > BestScore then
+            BestScore, Player = Score, player
+        end
+    end
+
+    return Player, BestScore
+end
+
+PlayerGroup:AddInput('GoTo', {
+    Default = '',
+    Finished = true,
+    Text = "Goto Player",
+    Tooltip = "Teleport behind a player",
+    Placeholder = '...',
+    Callback = function(Value)
+        local Player = IdentifyPlayer(Value)
+
+        if not Player then return Library:Notify("No player found") end --> replace with notifications later
+
+        local Pivot = Player.Character:GetPivot()
+
+        Root.CFrame = Pivot - Pivot.LookVector * 3
+    end
+})
+
+CreateToggle(LethalGroup, 'AutoStomp', 'If on, automatically stomps players killed by \'Kill Player\'')
+CreateToggle(LethalGroup, 'Return', 'Enables / Disables returning to your original position after \'Kill Player\' is used.')
+CreateToggle(LethalGroup, 'AntiStomp', "Automatically resets when you get knocked to avoid being stomped")
+CreateToggle(LethalGroup, 'Defend', "Automatically shoots somebody back if you get shot.")
+
+local Stop, Chosen;
+
+LethalGroup:AddInput('KillBox', {
+	Default = '',
+	Numeric = false,
+	Finished = true,
+	Text = 'Kill Player',
+	Tooltip = 'Kill a player by teleporting behind and spinning while shooting',
+	Placeholder = '...',
+	Callback = function(Value)
+		local Player = IdentifyPlayer(Value)
+		if not Player then return Library:Notify("Unable to identify player", 5) end
+
+		Chosen = Player
+        Library:Notify(`Identified Player: {Chosen.DisplayName} (@{Chosen.Name})`, 5)
+	end
+})
+
+LethalGroup:AddButton({
+    Text = "Confirm",
+    Tooltip = "Confirm this is the player you want",
+    Callback = function()
+        if not Chosen then
+            Library:Notify("Unable to start, No player found.", 5)
+            return
+        end
+
+        Stop = false
+
+        local OldPosition = Root.CFrame
+
+        local pChar = Chosen.Character
+        local pHumanoid = pChar and pChar:WaitForChild("Humanoid")
+
+        local Radius = 10
+
+        while pHumanoid and not IsKOED(pChar) and not Stop do
+	        local Pivot = pChar:GetPivot().Position
+
+	        local theta = Random() * 2 * math.pi
+	        local phi = Acos(2 * Random() - 1)
+
+	        local Position = Pivot + Vector3.new(Sin(phi) * Cos(theta), Sin(phi) * Sin(theta), Cos(phi)) * Radius
+
+	        Root.CFrame = CFnew(Position, Pivot)
+	        Shoot(Pivot)
+
+	        RunService.RenderStepped:Wait()
+        end
+
+        if Settings.AutoStomp and pHumanoid then
+	        local Tool = ToolEquipped
+	        ToolEquipped.Parent = nil
+
+	        Root.CFrame = pChar:GetPivot()
+
+	        Stomp()
+	        Wait(1)
+
+        	Tool.Parent = Character
+	        ToolEquipped = Tool
+        end
+
+
+		if Settings.Return then Root.CFrame = OldPosition end
+    end
+})
+
+LethalGroup:AddButton({
+    Text = "Cancel",
+    Tooltip = "Stop trying to kill the player",
+    Callback = function() Stop = true end
+})
+
+local OriginalIndex, OriginalNewIndex, OriginalNamecall
+local LastPart, LastPlayer;
+
+local function GetClosestCashRegister(Hit: Vector3, MaxDistance: number?): Instance
+    local ClosestPart
+    local ClosestDistance = MaxDistance or Settings.MaxDistance;
+
+    for _, CashRegister in next, workspace.Cashiers:GetChildren() do
+        local function IsVisible(part)
+            local Direction = (part.Position - Hit)
+
+            local ray = workspace:Raycast(Hit, Direction.Unit * Direction.Magnitude, Params)
+            return ray and ray.Instance:IsDescendantOf(CashRegister)
+        end
+
+        local Part = CashRegister:FindFirstChild("Open") -- deals most damage i think
+
+        if not Part then continue end
+        
+        local Direction = (Part.Position - Hit)
+        local Distance = Direction.magnitude
+
+        if ( ClosestDistance > Distance and CashRegister.Humanoid.Health > 0 ) then -- If the thing wasnt open
+            local IsVis, Ray = IsVisible(Part)
+
+            if IsVis and Ray then
+                ClosestPart, ClosestDistance = Part, Distance
+            end
+        end
+    end
+
+    return ClosestPart, ClosestDistance
+end
+
+local function GetClosestPart(MHit: CFrame) --> Uses Mouse.Hit
+    local Hit = MHit.Position
+    if LastPart then --> check if its still available
+        local Ray = workspace:Raycast(Hit, (Hit - LastPart.Position).Unit * 200, Params)
+        if ( not Ray or not Ray.Instance:IsDescendantOf(LastPart.Parent) or (LastPlayer and not Settings.AllowKnocked and IsKOED(LastPlayer)) ) then --> If the ray didnt succeed, allow knocked is off, lastplayer exists and is knocked:
+            LastPart = nil
+        end
+    end
+
+    if not LastPart then
+        local CashRegister = Settings.AllowCashRegisters and GetClosestCashRegister(Hit)
+        LastPart, LastPlayer = CashRegister or GetClosestPlayer(Hit)
+    end
+
+    return LastPart;
+end
+
+local Getmetatable = getmetatable
+
+local GETMT = newcclosure(function(a) return typeof(a) == "table" and Getmetatable(a) or {} end)
+
+local IsTrap = newcclosure(function(a)
+	local mt = typeof(a) == "table" and GETMT(a)
+	return mt and mt.__tostring
+end)
+
+OriginalIndex = hookmetamethod(game, "__index", newcclosure(function(Self, Key)
+    local Hit = OriginalIndex(Self, Key)
+
+	if Self == game and (not Key or IsTrap(Key)) then return error("missing argument #2 (string expected)") end
+	if not Self then error("invalid argument #1 (Instance expected, got nil)") end
+	if not Key then error("invalid argument #2 (string expected, got nil)") end
+
+    if Self == Humanoid and Key == "WalkSpeed" and not checkcaller() then return 16 end
+	if not ToolEquipped or Self ~= Mouse or not Settings.SilentAim then return Hit end
+
+    if Key == "Hit" then
+        local TargetPart = GetClosestPart(Hit)
+
+        if TargetPart then
+            if Settings.LookAt then
+                Root.CFrame = CFrame.lookAt(Root.Position, Vector3.new(TargetPart.Position.X, Root.Position.Y, TargetPart.Position.Z))
+            end
+
+            return TargetPart.CFrame
+        end
+    elseif Key == "Target" then return LastPart or GetClosestPart(OriginalIndex(Self, "Hit")) end
+
+    return Hit
+end))
+
+OriginalNewIndex = hookmetamethod(game, "__newindex", newcclosure(function(Self, Key, Value)
+    if Self == game and (not Key and not Value or IsTrap(Key)) then return error("missing argument #2 (string expected)") end
+	if not Self then error("invalid argument #1 (Instance expected, got nil)") end
+	if not Key then error("invalid argument #2 (string expected, got nil)") end
+
+	local src = getcallingscript()
+	local IsAC = src and not src.Parent and src.Name ~= "ChatMain" and src.Name ~= "CameraModule" and src.Name ~= "ControlModule" and not checkcaller()
+
+    if Self == Humanoid and Key == "WalkSpeed" and not checkcaller() then return end
+	if IsAC then return end
+
+	return OriginalNewIndex(Self, Key, Value)
+end))
+
+OriginalNamecall = hookmetamethod(game, "__namecall", newcclosure(function(Self, a, ...)
+    local Method = getnamecallmethod()
+	if Self == game and (not Method or IsTrap(a)) then return error("Trying to call Method on object of type: DataModel with incorrect arguments.") end
+
+    local src = getcallingscript()
+    local IsAC = src and not src.Parent and src.Name ~= "ChatMain" and src.Name ~= "CameraModule" and not checkcaller()
+
+	if IsAC then --> was written before dahood deleted their anticheat
+        if Method == "FindService" then return end
+        if Method == "WaitForChild" and typeof(a) == "table" then return Wait(...) end
+		if Find(Blocked_Methods, Lower(Method)) then error(`The current thread cannot call '{Method}' (lacking capability RobloxScript)`) end
+		if not Method or (not Method and not a) then error("invalid argument #1 (Instance expected, got nil)") end
+		if typeof(a) == "table" and Self == MarketplaceService then return error() end
+    end
+
+    if Method == "FireServer" and Self == MainEvent and Find(BlockedArgs, Lower(a or "")) then return end
+
+    return OriginalNamecall(Self, a, ...)
+end))
+
+RunService.RenderStepped:Connect(function()
+    if Settings.AutoShoot and ToolEquipped and IsGun then
+        Shoot()
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    local SpeedBoost = Settings.SpeedBoost
+    local MoveDirection = Humanoid.MoveDirection
+
+	if SpeedBoost > 0 and Humanoid and MoveDirection.Magnitude > 0 then
+        local RootCFrame = Root.CFrame
+        local Dir = RootCFrame:VectorToObjectSpace(MoveDirection.Unit)
+        Root.CFrame += RootCFrame.LookVector * -Dir.Z * SpeedBoost --> allat calculations just to fix inverted controls 💔
+          + RootCFrame.RightVector * Dir.X * SpeedBoost
+	end
+end)
+
+local BulletsFolder = workspace.Ignored.Siren.Radius
+
+local function IsDangerous(Bullet)
+	local BulletPos = Bullet.Position
+	local BulletDir = Bullet.CFrame.LookVector
+
+	return (Root.Position - BulletPos).Unit:Dot(BulletDir) > 0.98
+end
+
+BulletsFolder.ChildAdded:Connect(function(Bullet)
+	if not Settings.Defend then return end
+    local Shooter = Players:FindFirstChild(Bullet:GetAttribute("OwnerCharacter") or "")
+	if Shooter == LocalPlayer.Name or not Shooter then return end
+
+	if IsDangerous(Bullet) and tick() - LastHealthLost <= .3 then --> Lost health recently and the bullet was heading towards you
+        Library:Notify("DANGERRRRR (" .. Shooter.Name .. ")")
+
+        Shoot(Shooter.Character:FindFirstChild(Settings.HitPart).Position)
+	end
+end)
+
+Library:Notify("Hey, if you'd like to report bugs or support me, Join the discord! (" .. Discord .. ")", 10)
