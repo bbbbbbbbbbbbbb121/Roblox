@@ -35,6 +35,7 @@ local uiElements = {
 }
 
 uiElements["AI"].Parent = game:GetService("CoreGui")
+uiElements["AI"].Name = "AI"
 
 uiElements["Container"].Parent = uiElements["AI"]
 uiElements["Container"].Position = UDim2.new(0.5, 0, 0.5, 0)
@@ -229,13 +230,15 @@ uiElements["UIStroke_1"].Parent = uiElements["Bar"]
 uiElements["UIStroke_1"].ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 uiElements["UIStroke_1"].Color = Color3.fromRGB(40, 40, 40)
 uiElements["UIStroke_1"].Thickness = 0.6000000238418579
+-- since this ui to lua is horrible, i have to do this
+for name, i in next, uiElements do i.Name = name:gsub("_%d+", "") end
 
 local script = Instance.new("LocalScript", uiElements["Bar"])
 
 local user = game:GetService("UserInputService")
 local box = script.Parent
-local messagesList = box.Parent.Parent.Chat.Messages
-local userTemplate, sysTemplate = messagesList.UserTemplate, messagesList.SysTemplate
+local messagesList = uiElements["Messages"]
+local userTemplate, sysTemplate = uiElements.UserTemplate, uiElements.SysTemplate
 local lastBox, lastFocusReleased, isGenerating;
 local isStudio = game:GetService("RunService"):IsStudio()
 local currentOffset = 0
@@ -354,11 +357,12 @@ user.InputBegan:Connect(function(Input, GPE)
 				if not http_func then
 					return createMessage(false, "No http function available!")
 				end
-				Result = http_func(Data);
+                Data.Body = game:GetService("HttpService"):JSONEncode(Data.Body)
+				Result = game:GetService("HttpService"):JSONDecode(http_func(Data).Body);
 			end
 
 			isGenerating = false
-			local Msg = (Result.choices and Result.choices[1] or { message = { content = "Unable to fetch reply :(" } }).message.content
+			local Msg = (Result.choices and Result.choices[1] or { message = { content = "Unable to fetch reply :(" } }).message.content or "No content???"
 			table.insert(messages, {
 				role = "system",
 				content = Msg
