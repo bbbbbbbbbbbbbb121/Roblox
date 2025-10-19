@@ -1,3 +1,6 @@
+local ui = game:GetService("CoreGui"):FindFirstChild("AI")
+if ui then ui:Destroy() end
+
 -- This chatbot is powered by https://pollinations.ai
 
 local uiElements = {
@@ -308,13 +311,13 @@ user.InputBegan:Connect(function(Input, GPE)
 	local Code = Input.KeyCode
 	if Code == Enum.KeyCode.Return then -- I know I can use user:GetFocusedTextBox() but if they pressed enter, that means it's no longer focused, so check if the time between the unfocus & focus is less than 0.1 seconds
 		local IsShifting = user:IsKeyDown(Enum.KeyCode.LeftShift) or user:IsKeyDown(Enum.KeyCode.RightShift)
-		if IsShifting and tick() - lastFocusReleased < 0.01 then -- User meant a newline.
+		if lastBox == box and IsShifting and tick() - lastFocusReleased < 0.01 then -- User meant a newline.
 			box.Text ..= "\n"
 			box.CursorPosition = #box.Text + 1
 
 			box:CaptureFocus()
 		else -- Just send the message
-			if isGenerating or user:GetFocusedTextBox() ~= box then return end
+			if isGenerating or lastBox ~= box then return end
 
 			local Prompt = box.Text
 			box.Text = ""
