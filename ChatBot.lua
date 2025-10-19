@@ -314,7 +314,7 @@ user.InputBegan:Connect(function(Input, GPE)
 
 			box:CaptureFocus()
 		else -- Just send the message
-			if isGenerating or GPE then return end
+			if isGenerating or user:GetFocusedTextBox() ~= box then return end
 
 			local Prompt = box.Text
 			box.Text = ""
