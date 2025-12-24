@@ -95,9 +95,9 @@ function module:saveScripts(list : Scripts, threads : boolean?) : number
     local directory = ("%s/%s"):format(self.directory, gameName)
 
     for _, script in next, list do
-        local path = (("%s/%s.luac"):format(directory, script.Name)):gsub("%W", "")
+        local path = (("%s/%s.luac"):format(directory, script.Name)):gsub("[^%w/]", "")
         if fenv.isfile(path) then
-            path = ("%s/duplicate_%d_%s.luac"):format(directory, math.random(1e4, 1e6), script.Name):gsub("%W", "")
+            path = ("%s/duplicate_%d_%s.luac"):format(directory, math.random(1e4, 1e6), script.Name):gsub("[^%w/]", "")
         end
         if threads then
             task.spawn(fenv.writefile, path, fenv.getscriptbytecode(script)) --> process stuff on different threads, might be laggy!
